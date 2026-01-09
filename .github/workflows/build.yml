@@ -1,0 +1,104 @@
+name: Build APK
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Чистим место
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      # 2. Java 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 3. Python 3.9 (самый стабильный для Kivy)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      # 4. Системные зависимости
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git python3-dev \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libportmidi-dev \
+            libffi-dev libssl-dev zip unzip zlib1g-dev \
+            libtool libtool-bin autoconf automake
+
+      # 5. Установка Buildozer и ПРАВИЛЬНОГО Cython
+      # ВАЖНО: Мы принудительно ставим Cython версии 0.29.36.
+      # Новая версия 3.x ломает сборку Kivy.
+      - name: Install Buildozer dependencies
+        run: |
+          pip install --upgrade pip
+          pip install buildozer
+          pip install "cython==0.29.36"
+
+      # 6. Создаем buildozer.spec ВРУЧНУЮ
+      # Вместо того чтобы править файл командами sed, мы создаем его с нуля.
+      # Это гарантирует, что настройки будут идеальными.
+      - name: Create Buildozer Spec
+        run: |
+          cat > buildozer.spec <<EOF
+          [app]
+          title = Diamond Clicker
+          package.name = diamondclicker
+          package.domain = org.l1mzy
+          source.dir = .
+          source.include_exts = py,png,jpg,kv,atlas,json
+          version = 0.1
+          
+          # Требования
+          requirements = python3,kivy==2.3.0,pillow
+          
+          orientation = portrait
+          fullscreen = 0
+          
+          # Права и Архитектура (только 64 бит)
+          android.permissions = WRITE_EXTERNAL_STORAGE
+          android.archs = arm64-v8a
+          android.allow_backup = True
+          
+          # Автоматическое принятие лицензии
+          android.accept_sdk_license = True
+          
+          # API настройки (стандартные)
+          android.api = 33
+          android.minapi = 21
+          android.ndk_api = 21
+          
+          [buildozer]
+          log_level = 2
+          warn_on_root = 1
+          EOF
+
+      # 7. Запуск сборки
+      - name: Build with Buildozer
+        run: |
+          yes | buildozer android debug
+
+      # 8. Скачивание
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: bin/*.apk
+          compression-level: 0
